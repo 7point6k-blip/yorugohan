@@ -1,5 +1,5 @@
 // アプリ本体を端末に保存して一瞬で開くため ＋ 閉じていても通知を受け取るためのファイル
-const CACHE = "yorugohan-v4";
+const CACHE = "yorugohan-v5";
 const SHELL = ["./", "index.html", "app.js", "config.js", "timetable.js", "manifest.json", "img/plush.webp", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 importScripts("./config.js");

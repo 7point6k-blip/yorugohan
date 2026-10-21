@@ -121,7 +121,7 @@ function changes() {
 /* ---------- 大学に行く日：開始時刻から起床を計算 ----------
    東葛西1丁目 →(徒歩)→ 葛西 →(東西線)→ 飯田橋 →(徒歩)→ 法政 市ヶ谷 で固定 */
 const COMMUTE_KEY = "yorugohan-commute";
-const CM_DEF = { early: 10, campus: 15, home: 15, wake: 120 };
+const CM_DEF = { early: 10, campus: 20, home: 15, wake: 120 };
 const CM_FIELDS = [
   ["early", "大学に着くのは開始の", "分前"],
   ["campus", "飯田橋 → 大学（徒歩）", "分"],
