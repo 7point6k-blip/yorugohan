@@ -106,7 +106,7 @@ function baseDiff(wd) {
   if (ROLE !== "me" || !S.draft || !S.server) return false;
   return !same((S.draft.defaults || {})[wd], (S.server.defaults || {})[wd]);
 }
-const wakeText = (w) => (w.mode === "time" ? `${hm(toMin(w.t))}w` : w.mode === "free" ? "無制限" : "未定");
+const wakeText = (w) => (!w ? "未定" : w.mode === "time" ? `${hm(toMin(w.t))}w` : w.mode === "free" ? "無制限" : "未定");
 const dinnerText = (k) => (!k || k === "tbd" ? "未定" : DINNER[k].label + (DINNER[k].sfx || "") + (DINNER[k].sub ? `（${DINNER[k].sub}）` : ""));
 const wasTag = (txt) => `<span class="was">送信済み ${txt}</span>`;
 /* 編集の対象： "d:日付" か "w:曜日" */
@@ -408,8 +408,8 @@ function weekList() {
     const was = (on, txt) => (on ? wasTag(txt) : "");
     return `<${tag} class="row ${me ? "" : "static"} ${df.wake || df.dinner ? "chg" : ""}" ${me ? `data-edit="${d}"` : ""}>
       <span class="d">${md(d)}${df.wake || df.dinner ? `<span class="newtag">未送信</span>` : ""}</span>
-      <span class="cell ${df.wake ? "on" : ""}">${wakeCell(e.wake, e.wakeBase)}${was(df.wake, wakeText(df.was && df.was.wake))}</span>
-      <span class="cell ${df.dinner ? "on" : ""}">${dinnerCell(e.dinner, e.dinnerBase)}${was(df.dinner, dinnerText(df.was && df.was.dinner))}</span>
+      <span class="cell ${df.wake ? "on" : ""}">${wakeCell(e.wake, e.wakeBase)}${df.wake ? was(true, wakeText(df.was.wake)) : ""}</span>
+      <span class="cell ${df.dinner ? "on" : ""}">${dinnerCell(e.dinner, e.dinnerBase)}${df.dinner ? was(true, dinnerText(df.was.dinner)) : ""}</span>
       ${me ? `<span class="chev">›</span>` : ""}</${tag}>`;
   }).join("");
   return `<section class="card week ${me ? "" : "static"}">
