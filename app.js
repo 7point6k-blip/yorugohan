@@ -58,7 +58,8 @@ const S = {
   draft: null,      // 自分側の書きかけ
   loaded: false, error: "", sending: false, push: "idle",
   lastWake: "08:00",
-  tab: "plan",      // 自分側のタブ： "plan"（いつもの予定）/ "uni"（大学）
+  tab: "plan",
+  uniDate: null,    // 大学タブで見ている日      // 自分側のタブ： "plan"（いつもの予定）/ "uni"（大学）
   view: null,       // シート: {type:"day",date} / {type:"base"} / {type:"wd",wd}
 };
 function setServer(srv, keepDraft) {
@@ -121,22 +122,22 @@ function changes() {
 /* ---------- 大学タブ：到着時刻から起床を計算 ----------
    東葛西1丁目 →(徒歩)→ 葛西 →(東西線)→ 飯田橋 →(徒歩)→ 法政 市ヶ谷 で固定。
    大学の予定・時限の設定は自分のスマホだけに保存し、起床だけをいつもの予定に書き込む */
-const COMMUTE_KEY = "yorugohan-commute", PERIOD_KEY = "yorugohan-periods", UNI_KEY = "yorugohan-uni", LAST_T_KEY = "yorugohan-laststart";
-const CM_DEF = { early: 10, campus: 20, home: 15, wake: 120 };
-const CM_FIELDS = [
-  ["early", "大学に着くのは到着時刻の", "分前"],
-  ["campus", "飯田橋 → 大学（徒歩）", "分"],
-  ["home", "家 → 葛西（徒歩）", "分"],
-  ["wake", "起床は葛西発の", "分前"],
+const PERIOD_KEY = "yorugohan-periods2", UNI_KEY = "yorugohan-uni", LAST_T_KEY = "yorugohan-laststart";
+const CM = { early: 10, campus: 20, home: 15, wake: 120 }; // 到着の10分前に大学、飯田橋→大学20分、家→葛西15分、起床は葛西発の2時間前
+/* 時限など（開始時刻、起床を決めておく場合はその時刻。null は時刻表から計算） */
+const PERIOD_DEF = [
+  { k: "1", name: "1限", s: "08:50", w: "06:00" },
+  { k: "2", name: "2限", s: "10:40", w: "07:50" },
+  { k: "3", name: "3限", s: "13:10", w: null },
+  { k: "4", name: "4限", s: "15:00", w: null },
+  { k: "c", name: "委員会", s: "17:00", w: "14:00" },
 ];
-/* 市ヶ谷の時限（開始時刻、起床を決めておく場合はその時刻） */
-const PERIOD_DEF = [["08:50", "06:00"], ["10:40", "07:50"], ["13:10", null], ["15:00", null], ["16:50", null], ["18:35", null], ["20:20", null]];
-const cmSet = () => Object.assign({}, CM_DEF, ls.get(COMMUTE_KEY) || {});
 function periods() {
-  const sv = ls.get(PERIOD_KEY) || [];
-  return PERIOD_DEF.map((d, i) => ({ s: (sv[i] && sv[i].s) || d[0], w: sv[i] && "w" in sv[i] ? sv[i].w : d[1] }));
+  const sv = ls.get(PERIOD_KEY) || {};
+  return PERIOD_DEF.map((d) => ({ k: d.k, name: d.name, s: (sv[d.k] && sv[d.k].s) || d.s, w: sv[d.k] && "w" in sv[d.k] ? sv[d.k].w : d.w }));
 }
-function savePeriod(i, patch) { const all = periods(); Object.assign(all[i], patch); ls.set(PERIOD_KEY, all); }
+const periodOf = (k) => periods().find((p) => p.k === String(k)) || null;
+function savePeriod(k, patch) { const sv = ls.get(PERIOD_KEY) || {}; sv[k] = Object.assign({}, sv[k] || {}, patch); ls.set(PERIOD_KEY, sv); }
 const uniAll = () => ls.get(UNI_KEY) || {};
 const uniGet = (d) => uniAll()[d] || null;
 function uniPut(d, v) {
@@ -155,21 +156,20 @@ const HOLIDAYS = new Set([
   "2027-11-03", "2027-11-23", "2027-12-30", "2027-12-31",
 ]);
 const isHolidayDia = (d) => [0, 6].includes(wdOf(d)) || HOLIDAYS.has(d);
-const diaName = (d) => (isHolidayDia(d) ? "土休日ダイヤ" : "平日ダイヤ");
-/* その日の大学の予定 u = {p:時限} か {t:"HH:MM"}、shift = ぴったりの電車から何本ずらすか */
+/* その日の大学の予定 u = {t:"HH:MM", p:時限キー（時限を選んだ時だけ）, shift:ぴったりの電車から何本ずらすか} */
 function plan(date, u) {
-  const P = cmSet(), T = self.TOZAI;
+  const T = self.TOZAI;
   if (!T) return { error: "時刻表を読み込めませんでした。アプリを開き直してください" };
-  const per = u.p ? periods()[u.p - 1] : null;
-  const at = toMin(per ? per.s : u.t), arrive = at - P.early, need = arrive - P.campus;
+  const per = u.p ? periodOf(u.p) : null;
+  const at = toMin(per ? per.s : u.t), arrive = at - CM.early, need = arrive - CM.campus;
   const list = isHolidayDia(date) ? T.holiday : T.weekday;
   let base = -1;
   list.forEach((x, k) => { if (x[1] <= need) base = k; });
-  if (base < 0) return { error: "間に合う電車がありません（始発より前です）", at };
+  if (base < 0) return { error: "間に合う電車がありません" };
   const idx = Math.min(Math.max(base + (u.shift || 0), 0), list.length - 1), tr = list[idx];
   const fixed = !!(per && per.w && !u.shift);
-  const w = fixed ? toMin(per.w) : Math.max(floor10(tr[0] - P.wake), 0);
-  return { at, arrive, need, list, base, idx, dep: tr[0], iida: tr[1], leave: tr[0] - P.home, w, b: w + 20, fixed };
+  const w = fixed ? toMin(per.w) : Math.max(floor10(tr[0] - CM.wake), 0);
+  return { at, idx, last: list.length - 1, dep: tr[0], iida: tr[1], leave: tr[0] - CM.home, late: tr[1] > need, w, b: w + 20, per };
 }
 /* 大学の予定を、いつもの予定（起床）に書き込む */
 function writeWake(d) {
@@ -180,82 +180,70 @@ function writeWake(d) {
   if (!Object.keys(box).length) delete S.draft.days[d];
 }
 function uniSet(d, v) { uniPut(d, v); writeWake(d); saveDraft(); render(); }
+const uniDay = () => { const t = todayIso(); return S.uniDate && S.uniDate > t && S.uniDate <= addDays(t, 7) ? S.uniDate : addDays(t, 1); };
 function uniRewriteAll() {
   const t = todayIso();
   Object.keys(uniAll()).forEach((d) => { if (d >= t) writeWake(d); });
   saveDraft(); render();
 }
-function stepper(id, m) {
-  const b = (d, l) => `<button data-step="${id}" data-d="${d}">${l}</button>`;
-  return `<div class="stepper"><div class="st-top">${b(-60, "−1時間")}<div class="st-val num">${hm(m)}</div>${b(60, "+1時間")}</div>
-    <div class="st-row">${b(-10, "−10分")}${b(-5, "−5分")}${b(5, "+5分")}${b(10, "+10分")}</div></div>`;
-}
-function uniLabel(u) {
-  if (!u) return `<span class="c m">なし</span>`;
-  if (u.p) return `<span class="c">${u.p}限<small>${hm(toMin(periods()[u.p - 1].s))}</small></span>`;
-  return `<span class="c">${hm(toMin(u.t))}<small>着</small></span>`;
-}
 function renderUni() {
-  const t = todayIso();
-  const rows = [1, 2, 3, 4, 5, 6, 7].map((i) => {
-    const d = addDays(t, i), u = uniGet(d), r = u ? plan(d, u) : null;
-    const right = !r ? `<span class="c m">—</span>` : r.error ? `<span class="c m">電車なし</span>`
-      : `<span class="c">${hm(r.w)}w<span class="w2">葛西 ${hm(r.dep)}発</span></span>`;
-    return `<button class="row" data-uni="${d}"><span class="d">${md(d)}</span>${uniLabel(u)}${right}<span class="chev">›</span></button>`;
-  }).join("");
-  const P = cmSet();
-  const sets = CM_FIELDS.map(([k, l, u]) => `<label class="cm-set"><span>${l}</span>
-      <input type="number" inputmode="numeric" min="0" max="300" value="${P[k]}" data-cmset="${k}"><span>${u}</span></label>`).join("");
-  return `<section class="card week"><div class="head"><span>日付</span><span>大学</span><span>起床</span><span></span></div>${rows}
-      <button class="linkbtn" data-act="periods">時限と時刻の設定</button></section>
-    <details class="card cm-details"><summary>計算の設定</summary>${sets}
-      <p class="cm-note">時刻表：${self.TOZAI ? self.TOZAI.updated : "—"} 時点の東京メトロ東西線（葛西→飯田橋）。ダイヤは日付の曜日・祝日から自動で選びます</p></details>`;
-}
-function uniSheet(d) {
-  const u = uniGet(d), ps = periods();
-  const pb = ps.map((p, i) => `<button class="opt pbtn ${u && u.p === i + 1 ? "on" : ""}" data-up="${i + 1}"><b>${i + 1}限</b><small>${hm(toMin(p.s))}</small></button>`).join("");
-  let body = `<div class="card"><p class="label"><span>行く時間</span><span class="d">${diaName(d)}</span></p>
-    <div class="pgrid">${pb}<button class="opt pbtn ${u && u.t ? "on" : ""}" data-up="t"><b>時刻</b><small>指定</small></button>
-    <button class="opt pbtn tbd ${u ? "" : "on"}" data-up="none"><b>なし</b></button></div></div>`;
-  if (u && u.t) body += `<div class="card"><p class="label"><span>到着時刻</span></p>${stepper("ut", toMin(u.t))}</div>`;
+  const t = todayIso(), d = uniDay(), u = uniGet(d);
+  const first = d <= addDays(t, 1), lastD = d >= addDays(t, 7);
+  const pb = periods().map((p) => `<button class="opt ${u && u.p === p.k ? "on" : ""}" data-up="${p.k}"><b>${p.name}</b><small>${hm(toMin(p.s))}</small></button>`).join("");
+  const tm = toMin((u && u.t) || ls.get(LAST_T_KEY) || "13:00");
+  let res = `<p class="cm-note" style="margin:0 4px">到着時刻を回すか、上から選ぶと起床が出ます</p>`;
   if (u) {
-    const r = plan(d, u), P = cmSet();
-    if (r.error) body += `<div class="card"><p class="cm-err">${r.error}</p></div>`;
-    else {
-      const line = (k, val, note = "") => `<div class="cm-line"><span>${k}</span><b class="num">${val}</b>${note ? `<small>${note}</small>` : ""}</div>`;
-      const trains = [];
-      for (let k = Math.max(r.idx - 2, 0); k <= Math.min(r.idx + 2, r.list.length - 1); k++) {
-        const x = r.list[k], late = x[1] > r.need;
-        trains.push(`<button class="tr ${k === r.idx ? "on" : ""} ${late ? "late" : ""}" data-shift="${k - r.base}">
-          <b class="num">${hm(x[0])}</b><span class="num">→ ${hm(x[1])}</span><small>${late ? "遅刻" : k === r.base ? "ぴったり" : ""}</small></button>`);
-      }
-      body += `<div class="card cm-res">
-        <div class="cm-wb"><div class="big">${hm(r.w)}<i>w</i></div><div class="big sub">${hm(r.b)}<i>b</i></div>${r.fixed ? `<span class="tag">${u.p}限の設定</span>` : ""}</div>
-        <div class="cm-lines">
-          ${line("家を出る", hm(r.leave))}
-          ${line("葛西", hm(r.dep) + " 発", "東西線 中野方面")}
-          ${line("飯田橋", hm(r.iida) + " 着")}
-          ${line("大学に着く", hm(r.arrive) + " まで", `到着時刻${hm(r.at)}の${P.early}分前`)}
-        </div></div>
-      <div class="card"><p class="label"><span>前後の電車</span><span>葛西発 → 飯田橋着</span></p><div class="trains">${trains.join("")}</div></div>
-      <p class="cm-note" style="margin:0 4px">この日の起床は、いつもの予定にもそのまま入っています</p>`;
-    }
+    const r = plan(d, u);
+    res = r.error ? `<div class="card"><p class="cm-err">${r.error}</p></div>`
+      : `<section class="card cm-res">
+        <div class="cm-wb"><div class="big">${hm(r.w)}<i>w</i></div><div class="big sub">${hm(r.b)}<i>b</i></div></div>
+        <div class="trnav">
+          <button data-act="trprev" ${r.idx <= 0 ? "disabled" : ""} aria-label="1本前">‹</button>
+          <div class="trinfo"><span class="num">葛西 ${hm(r.dep)}発 → 飯田橋 ${hm(r.iida)}着</span>
+            <small class="num">家を出る ${hm(r.leave)}${r.late ? `<em>遅刻</em>` : ""}</small></div>
+          <button data-act="trnext" ${r.idx >= r.last ? "disabled" : ""} aria-label="1本後">›</button>
+        </div></section>
+      <button class="ghost" data-up="none">この日は大学に行かない</button>`;
   }
-  return body;
+  return `<section class="card">
+      <div class="unidate"><button data-act="udprev" ${first ? "disabled" : ""} aria-label="前の日">‹</button>
+        <b class="num">${d === addDays(t, 1) ? "明日 " : ""}${md(d)}</b>
+        <button data-act="udnext" ${lastD ? "disabled" : ""} aria-label="次の日">›</button></div>
+      <div class="pgrid">${pb}</div>
+      <p class="label" style="margin:16px 0 0"><span>到着時刻</span></p>
+      ${timeWheels("u:" + d, tm, "着")}</section>
+    ${res}
+    <button class="linkbtn" data-act="periods">時限の時刻を変える</button>`;
 }
 function periodsSheet() {
-  const rows = periods().map((p, i) => `<button class="row" data-per="${i}"><span class="d">${i + 1}限</span>
+  const rows = periods().map((p) => `<button class="row" data-per="${p.k}"><span class="d">${p.name}</span>
       <span class="c">${hm(toMin(p.s))}<small>開始</small></span><span class="c ${p.w ? "" : "m"}">${p.w ? hm(toMin(p.w)) + "w" : "時刻表から"}</span><span class="chev">›</span></button>`).join("");
-  return `<section class="card week"><div class="head"><span>時限</span><span>開始</span><span>起床</span><span></span></div>${rows}</section>
-    <p class="cm-note" style="margin:0 4px">起床を決めていない時限は、時刻表から間に合う電車を探して計算します</p>`;
+  return `<section class="card week"><div class="head"><span></span><span>開始</span><span>起床</span><span></span></div>${rows}</section>`;
 }
-function periodSheet(i) {
-  const p = periods()[i];
+function periodSheet(k) {
+  const p = periodOf(k);
   const seg = (on, v, l) => `<button class="${on ? "on" : ""}" data-pwmode="${v}">${l}</button>`;
-  return `<div class="card"><p class="label"><span>${i + 1}限の開始時刻</span></p>${stepper("ps:" + i, toMin(p.s))}</div>
+  return `<div class="card"><p class="label"><span>${p.name}の開始時刻</span></p>${timeWheels("ps:" + k, toMin(p.s), "")}</div>
     <div class="card"><p class="label"><span>起床</span></p>
       <div class="seg two">${seg(!p.w, "auto", "時刻表から")}${seg(!!p.w, "fix", "時刻を決める")}</div>
-      ${p.w ? `<div style="margin-top:14px">${stepper("pw:" + i, toMin(p.w))}</div><div class="cm-note">朝ごはんは ${bOf(p.w)}b</div>` : ""}</div>`;
+      ${p.w ? `${timeWheels("pw:" + k, toMin(p.w), "w")}<div class="wheelwrap" style="margin-top:0"><div class="b">${bOf(p.w)}b</div></div>` : ""}</div>`;
+}
+/* ホイールの値の読み書き（t: "d:日付"/"w:曜日" は起床、"u:日付" は到着時刻、"ps:時限"/"pw:時限" は時限の設定） */
+function wheelGet(t) {
+  const [k, v] = t.split(":");
+  if (k === "u") { const u = uniGet(v); return toMin((u && u.t) || ls.get(LAST_T_KEY) || "13:00"); }
+  if (k === "ps") return toMin(periodOf(v).s);
+  if (k === "pw") { const p = periodOf(v); return p.w ? toMin(p.w) : null; }
+  const w = getT(t).wake;
+  return w.mode === "time" ? toMin(w.t) : null;
+}
+function wheelSet(t, m) {
+  m = Math.min(Math.max(m, 0), 23 * 60 + 55);
+  const [k, v] = t.split(":");
+  if (k === "u") { ls.set(LAST_T_KEY, hhmm(m)); uniSet(v, { t: hhmm(m), shift: 0 }); }
+  else if (k === "ps") { savePeriod(v, { s: hhmm(m) }); uniRewriteAll(); }
+  else if (k === "pw") { savePeriod(v, { w: hhmm(m) }); uniRewriteAll(); }
+  else setWake(t, m);
 }
 
 /* ---------- サーバー ---------- */
@@ -364,24 +352,25 @@ function dinnerPicker(t) {
   };
   return `<div class="dinner">${btn("19")}${btn("20")}${btn("21")}${btn("out", "wide")}${btn("tbd", "wide tbd")}</div>`;
 }
+function timeWheels(t, m, label) {
+  const h = Math.floor(m / 60), mi5 = (m % 60) - ((m % 60) % 5);
+  const col = (kind, n, step, sel) => {
+    let rows = `<div class="padrow"></div><div class="padrow"></div>`;
+    for (let v = 0; v < n; v += step) rows += `<div class="${v === sel ? "sel" : ""}">${kind === "h" ? v : pad(v)}</div>`;
+    return rows + `<div class="padrow"></div><div class="padrow"></div>`;
+  };
+  return `<div class="wheelwrap"><div class="wheels">
+      <div class="wheel" data-wheel="h" data-t="${t}" data-sel="${h}" aria-label="時">${col("h", 24, 1, h)}</div>
+      <span class="colon">:</span>
+      <div class="wheel" data-wheel="m" data-t="${t}" data-sel="${mi5 / 5}" aria-label="分">${col("m", 60, 5, mi5)}</div>
+      <span class="wlabel">${label}</span>
+    </div></div>`;
+}
 function wakePicker(t) {
   const w = getT(t).wake;
   const seg = (m, l) => `<button class="${w.mode === m ? "on" : ""}" data-wmode="${m}" data-t="${t}">${l}</button>`;
   let body = "";
-  if (w.mode === "time") {
-    const m = toMin(w.t), h = Math.floor(m / 60), mi5 = (m % 60) - ((m % 60) % 5);
-    const col = (kind, n, step, sel) => {
-      let rows = `<div class="padrow"></div><div class="padrow"></div>`;
-      for (let v = 0; v < n; v += step) rows += `<div class="${v === sel ? "sel" : ""}">${kind === "h" ? v : pad(v)}</div>`;
-      return rows + `<div class="padrow"></div><div class="padrow"></div>`;
-    };
-    body = `<div class="wheelwrap"><div class="wheels">
-        <div class="wheel" data-wheel="h" data-t="${t}" data-sel="${h}" aria-label="時">${col("h", 24, 1, h)}</div>
-        <span class="colon">:</span>
-        <div class="wheel" data-wheel="m" data-t="${t}" data-sel="${mi5 / 5}" aria-label="分">${col("m", 60, 5, mi5)}</div>
-        <span class="wlabel">w</span>
-      </div><div class="b">${bOf(w.t)}b</div></div>`;
-  }
+  if (w.mode === "time") body = timeWheels(t, toMin(w.t), "w").replace(/<\/div>$/, `<div class="b">${bOf(w.t)}b</div></div>`);
   return `<div class="seg">${seg("time", "時間")}${seg("free", "無制限")}${seg("tbd", "未定")}</div>${body}`;
 }
 function wakeCell(w, isBase) {
@@ -438,15 +427,12 @@ function renderSheet() {
     body = `<div class="card"><p class="label"><span>朝（起床）</span></p>${wakePicker("d:" + v.date)}</div>
       <div class="card"><p class="label"><span>夜ご飯</span></p>${dinnerPicker("d:" + v.date)}</div>
       ${x ? `<button class="ghost" data-act="reset" data-date="${v.date}">この日を基本の予定に戻す</button>` : ""}`;
-  } else if (v.type === "uni") {
-    head = `<h2>${ymd(v.date)}</h2>`;
-    body = uniSheet(v.date);
   } else if (v.type === "periods") {
-    head = `<h2>時限と時刻</h2>`;
+    head = `<h2>時限の時刻</h2>`;
     body = periodsSheet();
   } else if (v.type === "period") {
-    head = `<button class="back" data-act="periods">‹ 時限と時刻</button>`;
-    body = periodSheet(v.i);
+    head = `<button class="back" data-act="periods">‹ 時限の時刻</button>`;
+    body = periodSheet(v.k);
   } else if (v.type === "base") {
     head = `<h2>基本の予定</h2>`;
     const rows = WD_ORDER.map((wd) => {
@@ -491,13 +477,12 @@ function bindWheel(el) {
     if (!user) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      const t = el.dataset.t, w = getT(t).wake;
-      if (w.mode !== "time") return;
-      const m = toMin(w.t);
+      const t = el.dataset.t, m = wheelGet(t);
+      if (m === null) return;
       let h = Math.floor(m / 60), mi = m % 60;
       const idx = Math.round(el.scrollTop / 40);
       if (el.dataset.wheel === "h") h = Math.min(Math.max(idx, 0), 23); else mi = Math.min(Math.max(idx, 0), 11) * 5;
-      if (h * 60 + mi !== m) setWake(t, h * 60 + mi);
+      if (h * 60 + mi !== m) wheelSet(t, h * 60 + mi);
     }, 160);
   }, { passive: true });
 }
@@ -516,7 +501,7 @@ document.addEventListener("click", (e) => {
     wh.scrollTo({ top: i * 40, behavior: "smooth" });
     return;
   }
-  const b = e.target.closest("[data-dinner],[data-wmode],[data-edit],[data-act],[data-wd],[data-tab],[data-uni],[data-up],[data-shift],[data-step],[data-per],[data-pwmode]");
+  const b = e.target.closest("[data-dinner],[data-wmode],[data-edit],[data-act],[data-wd],[data-tab],[data-up],[data-per],[data-pwmode]");
   if (!b) return;
   if (b.dataset.act === "push") { enablePush(); return; }
   if (ROLE !== "me") return;
@@ -529,40 +514,21 @@ document.addEventListener("click", (e) => {
   if (b.dataset.edit) { S.view = { type: "day", date: b.dataset.edit }; render(); return; }
   if (b.dataset.wd) { S.view = { type: "wd", wd: Number(b.dataset.wd) }; render(); return; }
   if (b.dataset.tab) { S.tab = b.dataset.tab; S.view = null; render(); scrollTo(0, 0); return; }
-  if (b.dataset.uni) { S.view = { type: "uni", date: b.dataset.uni }; render(); return; }
-  if (b.dataset.per) { S.view = { type: "period", i: Number(b.dataset.per) }; render(); return; }
+  if (b.dataset.per) { S.view = { type: "period", k: b.dataset.per }; render(); return; }
   if (b.dataset.up) {
-    const d = S.view.date, k = b.dataset.up;
+    const d = uniDay(), k = b.dataset.up;
     if (k === "none") uniSet(d, null);
-    else if (k === "t") uniSet(d, { t: (uniGet(d) || {}).t || ls.get(LAST_T_KEY) || "13:00", shift: 0 });
-    else uniSet(d, { p: Number(k), shift: 0 });
-    return;
-  }
-  if (b.dataset.shift !== undefined) {
-    const d = S.view.date, u = uniGet(d);
-    if (u) uniSet(d, Object.assign({}, u, { shift: Number(b.dataset.shift) }));
-    return;
-  }
-  if (b.dataset.step) {
-    const [id, i] = b.dataset.step.split(":"), dm = Number(b.dataset.d);
-    const mv = (t) => hhmm(Math.min(Math.max(toMin(t) + dm, 0), 23 * 60 + 55));
-    if (id === "ut") {
-      const d = S.view.date, u = uniGet(d);
-      if (!u) return;
-      const t = mv(u.t); ls.set(LAST_T_KEY, t);
-      uniSet(d, { t, shift: 0 });
-    } else if (id === "ps") { savePeriod(Number(i), { s: mv(periods()[i].s) }); uniRewriteAll(); }
-    else if (id === "pw") { savePeriod(Number(i), { w: mv(periods()[i].w) }); uniRewriteAll(); }
+    else uniSet(d, { t: periodOf(k).s, p: k, shift: 0 });
     return;
   }
   if (b.dataset.pwmode) {
-    const i = S.view.i, p = periods()[i];
+    const k = S.view.k, p = periodOf(k);
     let w = null;
     if (b.dataset.pwmode === "fix") {
       w = p.w;
-      if (!w) { let d = addDays(todayIso(), 1); while (isHolidayDia(d)) d = addDays(d, 1); const r = plan(d, { p: i + 1 }); w = r.error ? "07:00" : hhmm(r.w); }
+      if (!w) { let d = addDays(todayIso(), 1); while (isHolidayDia(d)) d = addDays(d, 1); savePeriod(k, { w: null }); const r = plan(d, { p: k }); w = r.error ? "07:00" : hhmm(r.w); }
     }
-    savePeriod(i, { w });
+    savePeriod(k, { w });
     uniRewriteAll();
     return;
   }
@@ -572,20 +538,12 @@ document.addEventListener("click", (e) => {
     case "send": sendAll(); break;
     case "reset": delete S.draft.days[b.dataset.date]; uniPut(b.dataset.date, null); saveDraft(); render(); break;
     case "periods": S.view = { type: "periods" }; render(); break;
-  }
-});
-/* 大学の開始時刻・計算の設定 */
-document.addEventListener("change", (e) => {
-  const el = e.target;
-  if (ROLE !== "me") return;
-  if (el.dataset.cmset) {
-    const n = Math.round(Number(el.value));
-    const P = Object.assign({}, ls.get(COMMUTE_KEY) || {});
-    if (el.value === "" || !isFinite(n) || n < 0) delete P[el.dataset.cmset]; else P[el.dataset.cmset] = Math.min(n, 300);
-    ls.set(COMMUTE_KEY, P);
-    const open = !!document.querySelector(".cm-details[open]");
-    uniRewriteAll();
-    if (open) { const d = document.querySelector(".cm-details"); if (d) d.open = true; }
+    case "udprev": case "udnext": S.uniDate = addDays(uniDay(), b.dataset.act === "udnext" ? 1 : -1); render(); break;
+    case "trprev": case "trnext": {
+      const d = uniDay(), u = uniGet(d);
+      if (u) uniSet(d, Object.assign({}, u, { shift: (u.shift || 0) + (b.dataset.act === "trnext" ? 1 : -1) }));
+      break;
+    }
   }
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.view) { S.view = null; render(); } });
