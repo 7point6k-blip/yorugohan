@@ -59,7 +59,8 @@ const S = {
   loaded: false, error: "", sending: false, push: "idle",
   lastWake: "08:00",
   tab: "plan",
-  uniDate: null,    // 大学タブで見ている日      // 自分側のタブ： "plan"（いつもの予定）/ "uni"（大学）
+  calc: null,       // 大学タブの計算（到着時刻・時限・電車のずらし）
+  pick: null,       // 大学タブで起床を入れる日      // 自分側のタブ： "plan"（いつもの予定）/ "uni"（大学）
   view: null,       // シート: {type:"day",date} / {type:"base"} / {type:"wd",wd}
 };
 function setServer(srv, keepDraft) {
@@ -136,7 +137,7 @@ function changes() {
 /* ---------- 大学タブ：到着時刻から起床を計算 ----------
    東葛西1丁目 →(徒歩)→ 葛西 →(東西線)→ 飯田橋 →(徒歩)→ 法政 市ヶ谷 で固定。
    大学の予定・時限の設定は自分のスマホだけに保存し、起床だけをいつもの予定に書き込む */
-const PERIOD_KEY = "yorugohan-periods2", UNI_KEY = "yorugohan-uni", LAST_T_KEY = "yorugohan-laststart";
+const PERIOD_KEY = "yorugohan-periods2", LAST_T_KEY = "yorugohan-laststart";
 const CM = { early: 10, campus: 20, home: 15, wake: 120 }; // 到着の10分前に大学、飯田橋→大学20分、家→葛西15分、起床は葛西発の2時間前
 /* 時限など（開始時刻、起床を決めておく場合はその時刻。null は時刻表から計算） */
 const PERIOD_DEF = [
@@ -152,14 +153,6 @@ function periods() {
 }
 const periodOf = (k) => periods().find((p) => p.k === String(k)) || null;
 function savePeriod(k, patch) { const sv = ls.get(PERIOD_KEY) || {}; sv[k] = Object.assign({}, sv[k] || {}, patch); ls.set(PERIOD_KEY, sv); }
-const uniAll = () => ls.get(UNI_KEY) || {};
-const uniGet = (d) => uniAll()[d] || null;
-function uniPut(d, v) {
-  const a = uniAll(), t = todayIso();
-  for (const k of Object.keys(a)) if (k < t) delete a[k];
-  if (v) a[d] = v; else delete a[d];
-  ls.set(UNI_KEY, a);
-}
 /* 祝日と年末年始（土休日ダイヤ） */
 const HOLIDAYS = new Set([
   "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-12", "2026-02-11", "2026-02-23", "2026-03-20", "2026-04-29",
@@ -185,31 +178,38 @@ function plan(date, u) {
   const w = fixed ? toMin(per.w) : Math.max(floor10(tr[0] - CM.wake), 0);
   return { at, idx, last: list.length - 1, dep: tr[0], iida: tr[1], leave: tr[0] - CM.home, late: tr[1] > need, w, b: w + 20, per };
 }
-/* 大学の予定を、いつもの予定（起床）に書き込む */
-function writeWake(d) {
-  const u = uniGet(d);
-  const box = (S.draft.days[d] = S.draft.days[d] || {});
-  if (!u) delete box.wake;
-  else { const r = plan(d, u); if (r.error) return; box.wake = { mode: "time", t: hhmm(r.w) }; }
-  if (!Object.keys(box).length) delete S.draft.days[d];
-}
-function uniSet(d, v) { uniPut(d, v); writeWake(d); saveDraft(); render(); }
-const uniDay = () => { const t = todayIso(); return S.uniDate && S.uniDate > t && S.uniDate <= addDays(t, 7) ? S.uniDate : addDays(t, 1); };
-function uniRewriteAll() {
-  const t = todayIso();
-  Object.keys(uniAll()).forEach((d) => { if (d >= t) writeWake(d); });
-  saveDraft(); render();
+/* 大学タブは「何時着なら何時起き？」を確かめるための計算。下で選んだ日にだけ起床を入れる */
+const calc = () => S.calc || (S.calc = { t: ls.get(LAST_T_KEY) || "13:00", p: null, shift: 0, set: false });
+/* 平日ダイヤで見せる（土休日に入れる時はその日のダイヤで計算し直す） */
+const calcDate = () => { let d = addDays(todayIso(), 1); while (isHolidayDia(d)) d = addDays(d, 1); return d; };
+function applyCalc() {
+  const c = calc(), days = [...(S.pick || [])].sort();
+  if (!days.length) return;
+  const out = [];
+  for (const d of days) {
+    const r = plan(d, c);
+    if (r.error) continue;
+    S.draft.days[d] = S.draft.days[d] || {};
+    S.draft.days[d].wake = { mode: "time", t: hhmm(r.w) };
+    out.push(`${md(d).replace(/（.）/, "")} ${hm(r.w)}w`);
+  }
+  S.pick = new Set(); saveDraft(); render();
+  toast(out.length ? `${out.join("、")} にしました（まだ送っていません）` : "入れられませんでした");
 }
 function renderUni() {
-  const t = todayIso(), d = uniDay(), u = uniGet(d);
-  const first = d <= addDays(t, 1), lastD = d >= addDays(t, 7);
-  const pb = periods().map((p) => `<button class="opt ${u && u.p === p.k ? "on" : ""}" data-up="${p.k}"><b>${p.name}</b><small>${hm(toMin(p.s))}</small></button>`).join("");
-  const tm = toMin((u && u.t) || ls.get(LAST_T_KEY) || "13:00");
+  const t = todayIso(), c = calc(), cd = calcDate();
+  const pb = periods().map((p) => `<button class="opt ${c.set && c.p === p.k ? "on" : ""}" data-up="${p.k}"><b>${p.name}</b><small>${hm(toMin(p.s))}</small></button>`).join("");
   let res = `<p class="cm-note" style="margin:0 4px">到着時刻を回すか、上から選ぶと起床が出ます</p>`;
-  if (u) {
-    const r = plan(d, u);
-    res = r.error ? `<div class="card"><p class="cm-err">${r.error}</p></div>`
-      : `<section class="card cm-res ${diff(d).wake ? "chg" : ""}">
+  if (c.set) {
+    const r = plan(cd, c);
+    if (r.error) res = `<div class="card"><p class="cm-err">${r.error}</p></div>`;
+    else {
+      const pick = S.pick || new Set();
+      const chips = [1, 2, 3, 4, 5, 6, 7].map((i) => {
+        const d = addDays(t, i), cur = eff(d).wake;
+        return `<button class="chip ${pick.has(d) ? "on" : ""}" data-pick="${d}"><b>${i === 1 ? "明日" : WD[wdOf(d)]}</b><span class="num">${md(d).replace(/（.）/, "")}</span><small class="num">今 ${wakeText(cur)}</small></button>`;
+      }).join("");
+      res = `<section class="card cm-res">
         <div class="cm-wb"><div class="big">${hm(r.w)}<i>w</i></div><div class="big sub">${hm(r.b)}<i>b</i></div></div>
         <div class="trnav">
           <button data-act="trprev" ${r.idx <= 0 ? "disabled" : ""} aria-label="1本前">‹</button>
@@ -219,15 +219,15 @@ function renderUni() {
             <span class="num">葛西 ${hm(r.dep)}発 → 飯田橋 ${hm(r.iida)}着${r.late ? `<em>遅刻</em>` : ""}</span></div>
           <button data-act="trnext" ${r.idx >= r.last ? "disabled" : ""} aria-label="1本後">›</button>
         </div></section>
-      <button class="ghost" data-up="none">この日は大学に行かない</button>`;
+      <section class="card"><p class="label"><span>この起床を予定に入れる</span><span>入れたい日を選ぶ</span></p>
+        <div class="chips">${chips}</div>
+        <button class="cm-apply" data-act="apply" ${pick.size ? "" : "disabled"}>${pick.size ? `選んだ${pick.size}日を ${hm(r.w)}w にする` : "日を選ぶと入れられます"}</button></section>`;
+    }
   }
   return `<section class="card">
-      <div class="unidate"><button data-act="udprev" ${first ? "disabled" : ""} aria-label="前の日">‹</button>
-        <b class="num">${d === addDays(t, 1) ? "明日 " : ""}${md(d)}</b>
-        <button data-act="udnext" ${lastD ? "disabled" : ""} aria-label="次の日">›</button></div>
       <div class="pgrid">${pb}</div>
-      <p class="label" style="margin:16px 0 0"><span>到着時刻</span></p>
-      ${timeWheels("u:" + d, tm, "着")}</section>
+      <p class="label" style="margin:16px 0 0"><span>到着時刻</span><span>平日ダイヤ</span></p>
+      ${timeWheels("u:calc", toMin(c.t), "着")}</section>
     ${res}
     <button class="linkbtn" data-act="periods">時限の時刻を変える</button>`;
 }
@@ -247,7 +247,7 @@ function periodSheet(k) {
 /* ホイールの値の読み書き（t: "d:日付"/"w:曜日" は起床、"u:日付" は到着時刻、"ps:時限"/"pw:時限" は時限の設定） */
 function wheelGet(t) {
   const [k, v] = t.split(":");
-  if (k === "u") { const u = uniGet(v); return toMin((u && u.t) || ls.get(LAST_T_KEY) || "13:00"); }
+  if (k === "u") return toMin(calc().t);
   if (k === "ps") return toMin(periodOf(v).s);
   if (k === "pw") { const p = periodOf(v); return p.w ? toMin(p.w) : null; }
   const w = getT(t).wake;
@@ -256,9 +256,9 @@ function wheelGet(t) {
 function wheelSet(t, m) {
   m = Math.min(Math.max(m, 0), 23 * 60 + 55);
   const [k, v] = t.split(":");
-  if (k === "u") { ls.set(LAST_T_KEY, hhmm(m)); uniSet(v, { t: hhmm(m), shift: 0 }); }
-  else if (k === "ps") { savePeriod(v, { s: hhmm(m) }); uniRewriteAll(); }
-  else if (k === "pw") { savePeriod(v, { w: hhmm(m) }); uniRewriteAll(); }
+  if (k === "u") { ls.set(LAST_T_KEY, hhmm(m)); S.calc = { t: hhmm(m), p: null, shift: 0, set: true }; render(); }
+  else if (k === "ps") { savePeriod(v, { s: hhmm(m) }); if (S.calc && S.calc.p === v) S.calc.t = hhmm(m); render(); }
+  else if (k === "pw") { savePeriod(v, { w: hhmm(m) }); render(); }
   else setWake(t, m);
 }
 
@@ -523,7 +523,7 @@ document.addEventListener("click", (e) => {
     wh.scrollTo({ top: i * 40, behavior: "smooth" });
     return;
   }
-  const b = e.target.closest("[data-dinner],[data-wmode],[data-edit],[data-act],[data-wd],[data-tab],[data-up],[data-per],[data-pwmode]");
+  const b = e.target.closest("[data-dinner],[data-wmode],[data-edit],[data-act],[data-wd],[data-tab],[data-up],[data-per],[data-pwmode],[data-pick]");
   if (!b) return;
   if (b.dataset.act === "push") { enablePush(); return; }
   if (ROLE !== "me") return;
@@ -536,11 +536,15 @@ document.addEventListener("click", (e) => {
   if (b.dataset.edit) { S.view = { type: "day", date: b.dataset.edit }; render(); return; }
   if (b.dataset.wd) { S.view = { type: "wd", wd: Number(b.dataset.wd) }; render(); return; }
   if (b.dataset.tab) { S.tab = b.dataset.tab; S.view = null; render(); scrollTo(0, 0); return; }
+  if (b.dataset.pick) {
+    const pk = (S.pick = S.pick || new Set()), d = b.dataset.pick;
+    if (pk.has(d)) pk.delete(d); else pk.add(d);
+    render(); return;
+  }
   if (b.dataset.per) { S.view = { type: "period", k: b.dataset.per }; render(); return; }
   if (b.dataset.up) {
-    const d = uniDay(), k = b.dataset.up;
-    if (k === "none") uniSet(d, null);
-    else uniSet(d, { t: periodOf(k).s, p: k, shift: 0 });
+    const k = b.dataset.up;
+    S.calc = { t: periodOf(k).s, p: k, shift: 0, set: true }; render();
     return;
   }
   if (b.dataset.pwmode) {
@@ -551,25 +555,23 @@ document.addEventListener("click", (e) => {
       if (!w) { let d = addDays(todayIso(), 1); while (isHolidayDia(d)) d = addDays(d, 1); savePeriod(k, { w: null }); const r = plan(d, { p: k }); w = r.error ? "07:00" : hhmm(r.w); }
     }
     savePeriod(k, { w });
-    uniRewriteAll();
+    render();
     return;
   }
   switch (b.dataset.act) {
     case "close": S.view = null; render(); break;
     case "base": S.view = { type: "base" }; render(); break;
     case "send": sendAll(); break;
-    case "reset": delete S.draft.days[b.dataset.date]; uniPut(b.dataset.date, null); saveDraft(); render(); break;
+    case "reset": delete S.draft.days[b.dataset.date]; saveDraft(); render(); break;
     case "discard": {
       if (!confirm("まだ送っていない変更を取り消して、送信済みの内容に戻しますか？")) break;
-      changes().dates.forEach((d) => { if (diff(d).wake) uniPut(d, null); });
       S.draft = clone(S.server); saveDraft(); render(); toast("送信済みの内容に戻しました");
       break;
     }
     case "periods": S.view = { type: "periods" }; render(); break;
-    case "udprev": case "udnext": S.uniDate = addDays(uniDay(), b.dataset.act === "udnext" ? 1 : -1); render(); break;
+    case "apply": applyCalc(); break;
     case "trprev": case "trnext": {
-      const d = uniDay(), u = uniGet(d);
-      if (u) uniSet(d, Object.assign({}, u, { shift: (u.shift || 0) + (b.dataset.act === "trnext" ? 1 : -1) }));
+      const c = calc(); c.shift = (c.shift || 0) + (b.dataset.act === "trnext" ? 1 : -1); render();
       break;
     }
   }
