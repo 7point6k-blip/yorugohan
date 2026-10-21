@@ -85,8 +85,9 @@ function saveDraft() { if (ROLE === "me") ls.set(DRAFT_KEY, { draft: S.draft, ba
 const data = () => (ROLE === "me" ? S.draft : S.server) || EMPTY_SERVER;
 
 /* その日の値：決めてあればそれ、なければ曜日の基本 */
-function eff(date) {
-  const D = data(), x = D.days[date] || {}, base = (D.defaults || {})[wdOf(date)] || {};
+function eff(date, D) {
+  D = D || data();
+  const x = D.days[date] || {}, base = (D.defaults || {})[wdOf(date)] || {};
   return {
     dinner: x.dinner || base.dinner || "tbd",
     wake: x.wake || base.wake || { mode: "tbd" },
@@ -94,6 +95,19 @@ function eff(date) {
     wakeBase: !x.wake && !!base.wake && base.wake.mode !== "tbd",
   };
 }
+/* 送信済み（お母さんに見えている内容）と比べて、まだ送っていない変更があるか */
+function diff(date) {
+  if (ROLE !== "me" || !S.draft || !S.server) return { dinner: false, wake: false };
+  const a = eff(date, S.server), b = eff(date, S.draft);
+  return { dinner: !same(a.dinner, b.dinner), wake: !same(a.wake, b.wake), was: a };
+}
+function baseDiff(wd) {
+  if (ROLE !== "me" || !S.draft || !S.server) return false;
+  return !same((S.draft.defaults || {})[wd], (S.server.defaults || {})[wd]);
+}
+const wakeText = (w) => (w.mode === "time" ? `${hm(toMin(w.t))}w` : w.mode === "free" ? "無制限" : "未定");
+const dinnerText = (k) => (!k || k === "tbd" ? "未定" : DINNER[k].label + (DINNER[k].sfx || "") + (DINNER[k].sub ? `（${DINNER[k].sub}）` : ""));
+const wasTag = (txt) => `<span class="was">送信済み ${txt}</span>`;
 /* 編集の対象： "d:日付" か "w:曜日" */
 function getT(t) {
   const [k, v] = t.split(":");
@@ -195,7 +209,7 @@ function renderUni() {
   if (u) {
     const r = plan(d, u);
     res = r.error ? `<div class="card"><p class="cm-err">${r.error}</p></div>`
-      : `<section class="card cm-res">
+      : `<section class="card cm-res ${diff(d).wake ? "chg" : ""}">
         <div class="cm-wb"><div class="big">${hm(r.w)}<i>w</i></div><div class="big sub">${hm(r.b)}<i>b</i></div></div>
         <div class="trnav">
           <button data-act="trprev" ${r.idx <= 0 ? "disabled" : ""} aria-label="1本前">‹</button>
@@ -340,11 +354,11 @@ function wakeBig(w) {
   return `<div class="big">${hm(toMin(w.t))}<i>w</i></div><div class="big sub">${bOf(w.t)}<i>b</i></div>`;
 }
 function todayCard() {
-  const t = todayIso(), n = addDays(t, 1);
+  const t = todayIso(), n = addDays(t, 1), dt = diff(t), dn = diff(n);
   return `<section class="card today">
     <img class="plush" src="img/plush.webp" alt="" width="62" height="78" decoding="async">
-    <div class="half"><span class="k">今日の夜</span>${dinnerBig(eff(t).dinner)}</div>
-    <div class="half"><span class="k">明日の朝 <b>${md(n)}</b></span>${wakeBig(eff(n).wake)}</div></section>`;
+    <div class="half ${dt.dinner ? "chg" : ""}"><span class="k">今日の夜</span>${dinnerBig(eff(t).dinner)}${dt.dinner ? wasTag(dinnerText(dt.was.dinner)) : ""}</div>
+    <div class="half ${dn.wake ? "chg" : ""}"><span class="k">明日の朝 <b>${md(n)}</b></span>${wakeBig(eff(n).wake)}${dn.wake ? wasTag(wakeText(dn.was.wake)) : ""}</div></section>`;
 }
 function dinnerPicker(t) {
   const cur = getT(t).dinner;
@@ -390,20 +404,26 @@ function dinnerCell(k, isBase) {
 function weekList() {
   const me = ROLE === "me", t = todayIso();
   const rows = [1, 2, 3, 4, 5, 6].map((i) => {
-    const d = addDays(t, i), e = eff(d), tag = me ? "button" : "div";
-    return `<${tag} class="row ${me ? "" : "static"}" ${me ? `data-edit="${d}"` : ""}>
-      <span class="d">${md(d)}</span>${wakeCell(e.wake, e.wakeBase)}${dinnerCell(e.dinner, e.dinnerBase)}
+    const d = addDays(t, i), e = eff(d), tag = me ? "button" : "div", df = diff(d);
+    const was = (on, txt) => (on ? wasTag(txt) : "");
+    return `<${tag} class="row ${me ? "" : "static"} ${df.wake || df.dinner ? "chg" : ""}" ${me ? `data-edit="${d}"` : ""}>
+      <span class="d">${md(d)}${df.wake || df.dinner ? `<span class="newtag">未送信</span>` : ""}</span>
+      <span class="cell ${df.wake ? "on" : ""}">${wakeCell(e.wake, e.wakeBase)}${was(df.wake, wakeText(df.was && df.was.wake))}</span>
+      <span class="cell ${df.dinner ? "on" : ""}">${dinnerCell(e.dinner, e.dinnerBase)}${was(df.dinner, dinnerText(df.was && df.was.dinner))}</span>
       ${me ? `<span class="chev">›</span>` : ""}</${tag}>`;
   }).join("");
   return `<section class="card week ${me ? "" : "static"}">
     <div class="head"><span>先の予定</span><span>朝</span><span>夜</span>${me ? "<span></span>" : ""}</div>${rows}
-    ${me ? `<button class="linkbtn" data-act="base">基本の予定を設定</button>` : ""}</section>`;
+    ${me ? `<button class="linkbtn" data-act="base">基本の予定を設定${changes().defaults ? `<span class="newtag">未送信</span>` : ""}</button>` : ""}</section>`;
 }
 function sendBar() {
   const ch = changes(), n = ch.dates.length + (ch.defaults ? 1 : 0);
   const blocked = S.server && S.server.schema !== 2;
-  const label = S.sending ? "送信中…" : blocked ? "Apps Scriptの更新が必要です" : n ? `お母さんに送信（${n}件）` : "送信済み";
-  return `<div class="sendbar"><button data-act="send" ${n && !S.sending && !blocked ? "" : "disabled"}>${label}</button></div>`;
+  const label = S.sending ? "送信中…" : blocked ? "Apps Scriptの更新が必要です" : n ? `お母さんに送信（${n}件）` : "すべて送信済み";
+  const items = ch.dates.map((d) => { const f = diff(d); return `${md(d).replace(/（.）/, "")}${f.wake && f.dinner ? "朝・夜" : f.wake ? "朝" : f.dinner ? "夜" : ""}`; });
+  if (ch.defaults) items.push("基本の予定");
+  const note = n && !S.sending ? `<div class="sendnote"><span>未送信：${items.join("、")}</span><button data-act="discard">取り消す</button></div>` : "";
+  return `<div class="sendbar">${note}<button data-act="send" ${n && !S.sending && !blocked ? "" : "disabled"}>${label}</button></div>`;
 }
 function renderMe() {
   const t = todayIso(), n = addDays(t, 1);
@@ -412,8 +432,8 @@ function renderMe() {
   return `<header class="top">${ymd(t)}</header>${tabs}
     ${S.server && !S.server.momReady ? `<div class="card notice"><span>お母さんのスマホで、まだ通知がオンになっていません</span></div>` : ""}
     ${todayCard()}
-    <section class="card"><p class="label"><span>夜ご飯</span><span class="d">今日 ${md(t)}</span></p>${dinnerPicker("d:" + t)}</section>
-    <section class="card"><p class="label"><span>起床</span><span class="d">明日 ${md(n)}</span></p>${wakePicker("d:" + n)}</section>
+    <section class="card ${diff(t).dinner ? "chg" : ""}"><p class="label"><span>夜ご飯</span><span class="d">今日 ${md(t)}</span></p>${dinnerPicker("d:" + t)}</section>
+    <section class="card ${diff(n).wake ? "chg" : ""}"><p class="label"><span>起床</span><span class="d">明日 ${md(n)}</span></p>${wakePicker("d:" + n)}</section>
     ${weekList()}${sendBar()}`;
 }
 function renderMom() {
@@ -424,10 +444,10 @@ function renderSheet() {
   if (!v) return "";
   let head = "", body = "";
   if (v.type === "day") {
-    const x = S.draft.days[v.date];
+    const x = S.draft.days[v.date], df = diff(v.date);
     head = `<h2>${ymd(v.date)}</h2>`;
-    body = `<div class="card"><p class="label"><span>朝（起床）</span></p>${wakePicker("d:" + v.date)}</div>
-      <div class="card"><p class="label"><span>夜ご飯</span></p>${dinnerPicker("d:" + v.date)}</div>
+    body = `<div class="card ${df.wake ? "chg" : ""}"><p class="label"><span>朝（起床）</span>${df.wake ? wasTag(wakeText(df.was.wake)) : ""}</p>${wakePicker("d:" + v.date)}</div>
+      <div class="card ${df.dinner ? "chg" : ""}"><p class="label"><span>夜ご飯</span>${df.dinner ? wasTag(dinnerText(df.was.dinner)) : ""}</p>${dinnerPicker("d:" + v.date)}</div>
       ${x ? `<button class="ghost" data-act="reset" data-date="${v.date}">この日を基本の予定に戻す</button>` : ""}`;
   } else if (v.type === "periods") {
     head = `<h2>時限の時刻</h2>`;
@@ -439,7 +459,7 @@ function renderSheet() {
     head = `<h2>基本の予定</h2>`;
     const rows = WD_ORDER.map((wd) => {
       const b = getT("w:" + wd);
-      return `<button class="row" data-wd="${wd}"><span class="d">${WD[wd]}曜日</span>${wakeCell(b.wake, false)}${dinnerCell(b.dinner, false)}<span class="chev">›</span></button>`;
+      return `<button class="row ${baseDiff(wd) ? "chg" : ""}" data-wd="${wd}"><span class="d">${WD[wd]}曜日</span>${wakeCell(b.wake, false)}${dinnerCell(b.dinner, false)}<span class="chev">›</span></button>`;
     }).join("");
     body = `<section class="card week"><div class="head"><span>曜日</span><span>朝</span><span>夜</span><span></span></div>${rows}</section>`;
   } else {
@@ -539,6 +559,12 @@ document.addEventListener("click", (e) => {
     case "base": S.view = { type: "base" }; render(); break;
     case "send": sendAll(); break;
     case "reset": delete S.draft.days[b.dataset.date]; uniPut(b.dataset.date, null); saveDraft(); render(); break;
+    case "discard": {
+      if (!confirm("まだ送っていない変更を取り消して、送信済みの内容に戻しますか？")) break;
+      changes().dates.forEach((d) => { if (diff(d).wake) uniPut(d, null); });
+      S.draft = clone(S.server); saveDraft(); render(); toast("送信済みの内容に戻しました");
+      break;
+    }
     case "periods": S.view = { type: "periods" }; render(); break;
     case "udprev": case "udnext": S.uniDate = addDays(uniDay(), b.dataset.act === "udnext" ? 1 : -1); render(); break;
     case "trprev": case "trnext": {
