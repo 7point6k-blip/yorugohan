@@ -142,6 +142,27 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .done { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 99px; padding: 8px 18px; font-weight: 700; flex: none; }
 .ghost { border: 1px solid var(--line); background: transparent; border-radius: 99px; padding: 10px 14px; font-size: 14px; color: var(--muted); }
 
+/* 大学に行く日 */
+.cm-open { padding: 14px 0 0; text-align: left; width: auto; }
+.cm-time { display: block; width: 100%; border: 2px solid var(--line); border-radius: 14px; background: var(--card); padding: 10px 14px; font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: center; min-height: 58px; -webkit-appearance: none; appearance: none; }
+.cm-time:focus { outline: none; border-color: var(--accent); }
+.seg.two { grid-template-columns: 1fr 1fr; }
+.cm-res { display: flex; flex-direction: column; gap: 14px; }
+.cm-wb { display: flex; align-items: baseline; gap: 14px; }
+.cm-lines { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.cm-line { display: grid; grid-template-columns: 96px auto 1fr; align-items: baseline; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cm-line:last-child { border-bottom: 0; padding-bottom: 0; }
+.cm-line span { font-size: 13px; color: var(--muted); font-weight: 700; }
+.cm-line b { font-size: 18px; font-weight: 800; }
+.cm-line small { font-size: 11px; color: var(--muted); text-align: right; }
+.cm-apply { border: 0; border-radius: 16px; padding: 15px; font-weight: 800; font-size: 17px; background: var(--accent); color: var(--accent-ink); }
+.cm-err { margin: 0; color: var(--muted); line-height: 1.6; }
+.cm-details summary { font-weight: 700; font-size: 14px; color: var(--accent); cursor: pointer; }
+.cm-set { display: grid; grid-template-columns: 1fr 64px 36px; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; }
+.cm-set input { width: 64px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 8px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; font-size: 16px; }
+.cm-set span:last-child { color: var(--muted); font-size: 13px; }
+.cm-note { margin: 14px 0 0; font-size: 12px; color: var(--muted); }
+
 #toast { position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 16px); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0; transition: .2s; pointer-events: none; z-index: 30; max-width: calc(100% - 32px); text-align: center; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } .opt:active { transform: none; } }
@@ -151,6 +172,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 <body>
 <main id="app"></main>
 <div id="toast" role="status" aria-live="polite"></div>
+<script src="timetable.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
