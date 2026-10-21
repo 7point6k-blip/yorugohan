@@ -199,8 +199,10 @@ function renderUni() {
         <div class="cm-wb"><div class="big">${hm(r.w)}<i>w</i></div><div class="big sub">${hm(r.b)}<i>b</i></div></div>
         <div class="trnav">
           <button data-act="trprev" ${r.idx <= 0 ? "disabled" : ""} aria-label="1本前">‹</button>
-          <div class="trinfo"><span class="num">葛西 ${hm(r.dep)}発 → 飯田橋 ${hm(r.iida)}着</span>
-            <small class="num">家を出る ${hm(r.leave)}${r.late ? `<em>遅刻</em>` : ""}</small></div>
+          <div class="trinfo">
+            <div class="trbig"><div><small>家を出る</small><b class="num">${hm(r.leave)}</b></div>
+              <div><small>法政に着く</small><b class="num ${r.late ? "late" : ""}">${hm(r.iida + CM.campus)}</b></div></div>
+            <span class="num">葛西 ${hm(r.dep)}発 → 飯田橋 ${hm(r.iida)}着${r.late ? `<em>遅刻</em>` : ""}</span></div>
           <button data-act="trnext" ${r.idx >= r.last ? "disabled" : ""} aria-label="1本後">›</button>
         </div></section>
       <button class="ghost" data-up="none">この日は大学に行かない</button>`;
