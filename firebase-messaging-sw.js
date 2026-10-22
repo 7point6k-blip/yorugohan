@@ -1,5 +1,5 @@
 // アプリ本体を端末に保存して一瞬で開くため ＋ 閉じていても通知を受け取るためのファイル
-const CACHE = "yorugohan-v11";
+const CACHE = "yorugohan-v12";
 const SHELL = ["./", "index.html", "app.js", "config.js", "timetable.js", "manifest.json", "img/plush.webp", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 importScripts("./config.js");
@@ -9,6 +9,19 @@ try {
   firebase.initializeApp(self.APP_CONFIG.firebase);
   firebase.messaging(); // 通知の表示とタップ時の移動はSDKが自動で行う
 } catch (e) {}
+
+/* ホーム画面のアイコンに赤いバッジ（届いた通知の数）を付ける。アプリを開くと0に戻る */
+const META = "ygmeta";
+async function getBadge() { try { const r = await (await caches.open(META)).match("badge"); return r ? Number(await r.text()) || 0 : 0; } catch (e) { return 0; } }
+async function setBadge(n) {
+  try { await (await caches.open(META)).put("badge", new Response(String(n))); } catch (e) {}
+  try {
+    if (n > 0 && self.navigator.setAppBadge) await self.navigator.setAppBadge(n);
+    else if (self.navigator.clearAppBadge) await self.navigator.clearAppBadge();
+  } catch (e) {}
+}
+self.addEventListener("push", (e) => { e.waitUntil(getBadge().then((n) => setBadge(n + 1))); });
+self.addEventListener("message", (e) => { if (e.data === "clear-badge") e.waitUntil(getBadge().then((n) => (n > 0 ? setBadge(0) : null))); });
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();

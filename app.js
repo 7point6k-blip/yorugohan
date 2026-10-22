@@ -4,6 +4,7 @@ const C = self.APP_CONFIG;
 const AUTH_KEY = "yorugohan-auth";
 const CACHE_KEY = "yorugohan-cache-v2";
 const DRAFT_KEY = "yorugohan-draft-v2";
+const SEEN_KEY = "yorugohan-seen-v1"; // お母さん側：最後に確認したときの内容
 
 const DINNER = {
   "19":  { label: "19:00" },
@@ -96,11 +97,26 @@ function eff(date, D) {
     wakeBase: !x.wake && !!base.wake && base.wake.mode !== "tbd",
   };
 }
-/* 送信済み（お母さんに見えている内容）と比べて、まだ送っていない変更があるか */
+/* 自分側：送信済みと比べて、まだ送っていない変更があるか
+   お母さん側：最後に確認したときと比べて、変わったところがあるか */
 function diff(date) {
-  if (ROLE !== "me" || !S.draft || !S.server) return { dinner: false, wake: false };
-  const a = eff(date, S.server), b = eff(date, S.draft);
+  let a, b;
+  if (ROLE === "me" && S.draft && S.server) { a = eff(date, S.server); b = eff(date, S.draft); }
+  else if (ROLE === "mom" && S.server && S.seen && S.fresh) { a = eff(date, S.seen); b = eff(date, S.server); }
+  else return { dinner: false, wake: false };
   return { dinner: !same(a.dinner, b.dinner), wake: !same(a.wake, b.wake), was: a };
+}
+/* お母さん側：画面に出ている中で変わったところの数 */
+function momChanges() {
+  if (ROLE !== "mom") return 0;
+  const t = todayIso();
+  let n = diff(t).dinner ? 1 : 0;
+  for (let i = 1; i <= 6; i++) { const f = diff(addDays(t, i)); n += (f.wake ? 1 : 0) + (f.dinner ? 1 : 0); }
+  return n;
+}
+function markSeen() {
+  if (ROLE !== "mom" || !S.server || !S.fresh) return;
+  S.seen = clone(S.server); ls.set(SEEN_KEY, S.seen);
 }
 function baseDiff(wd) {
   if (ROLE !== "me" || !S.draft || !S.server) return false;
@@ -108,7 +124,7 @@ function baseDiff(wd) {
 }
 const wakeText = (w) => (!w ? "未定" : w.mode === "time" ? `${hm(toMin(w.t))}w` : w.mode === "free" ? "無制限" : "未定");
 const dinnerText = (k) => (!k || k === "tbd" ? "未定" : DINNER[k].label + (DINNER[k].sfx || "") + (DINNER[k].sub ? `（${DINNER[k].sub}）` : ""));
-const wasTag = (txt) => `<span class="was">送信済み ${txt}</span>`;
+const wasTag = (txt) => `<span class="was">${ROLE === "mom" ? "前" : "送信済み"} ${txt}</span>`;
 /* 編集の対象： "d:日付" か "w:曜日" */
 function getT(t) {
   const [k, v] = t.split(":");
@@ -281,7 +297,8 @@ async function refresh(keepDraft) {
   try {
     const j = await apiGet();
     setServer({ days: j.days || {}, defaults: j.defaults || {}, momReady: j.momReady, schema: j.schema || 1 }, keepDraft);
-    S.loaded = true; S.error = "";
+    S.loaded = true; S.error = ""; S.fresh = true;
+    if (ROLE === "mom" && !S.seen) markSeen(); // 初めて開いたときは、今の内容を基準にする
   } catch (e) {
     S.error = e.message || "読み込めませんでした";
   }
@@ -407,7 +424,7 @@ function weekList() {
     const d = addDays(t, i), e = eff(d), tag = me ? "button" : "div", df = diff(d);
     const was = (on, txt) => (on ? wasTag(txt) : "");
     return `<${tag} class="row ${me ? "" : "static"} ${df.wake || df.dinner ? "chg" : ""}" ${me ? `data-edit="${d}"` : ""}>
-      <span class="d">${md(d)}${df.wake || df.dinner ? `<span class="newtag">未送信</span>` : ""}</span>
+      <span class="d">${md(d)}${df.wake || df.dinner ? `<span class="newtag">${me ? "未送信" : "変更"}</span>` : ""}</span>
       <span class="cell ${df.wake ? "on" : ""}">${wakeCell(e.wake, e.wakeBase)}${df.wake ? was(true, wakeText(df.was.wake)) : ""}</span>
       <span class="cell ${df.dinner ? "on" : ""}">${dinnerCell(e.dinner, e.dinnerBase)}${df.dinner ? was(true, dinnerText(df.was.dinner)) : ""}</span>
       ${me ? `<span class="chev">›</span>` : ""}</${tag}>`;
@@ -437,7 +454,9 @@ function renderMe() {
     ${weekList()}${sendBar()}`;
 }
 function renderMom() {
-  return `<header class="top">${ymd(todayIso())}</header>${pushNotice()}${todayCard()}${weekList()}`;
+  const n = momChanges();
+  const note = n ? `<div class="card notice chgnote"><span><b>${n}か所</b>変わりました</span><button data-act="seen">確認した</button></div>` : "";
+  return `<header class="top">${ymd(todayIso())}</header>${pushNotice()}${note}${todayCard()}${weekList()}`;
 }
 function renderSheet() {
   const v = S.view;
@@ -526,6 +545,7 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-dinner],[data-wmode],[data-edit],[data-act],[data-wd],[data-tab],[data-up],[data-per],[data-pwmode],[data-pick]");
   if (!b) return;
   if (b.dataset.act === "push") { enablePush(); return; }
+  if (b.dataset.act === "seen") { markSeen(); render(); return; }
   if (ROLE !== "me") return;
   if (b.dataset.dinner) { setT(b.dataset.t, "dinner", b.dataset.dinner); return; }
   if (b.dataset.wmode) {
@@ -577,14 +597,29 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.view) { S.view = null; render(); } });
+/* お母さん側：アイコンの赤いバッジと、届いている通知を消す */
+function clearBadge() {
+  if (ROLE !== "mom") return;
+  try { if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {}); } catch (e) {}
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.ready.then((reg) => {
+      if (reg.active) reg.active.postMessage("clear-badge");
+      if (reg.getNotifications) reg.getNotifications().then((ns) => ns.forEach((n) => n.close())).catch(() => {});
+    }).catch(() => {});
+  }
+}
+/* お母さん側：変わったところを5秒以上見てから閉じたら「確認した」ことにする */
+let shownAt = Date.now();
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && ROLE && !S.sending) { render(); refresh(true); }
+  if (document.visibilityState === "visible" && ROLE && !S.sending) { shownAt = Date.now(); clearBadge(); render(); refresh(true); }
+  if (document.visibilityState === "hidden" && ROLE === "mom" && S.fresh && momChanges() && Date.now() - shownAt > 5000) markSeen();
 });
 
 /* ---------- 起動：前回の内容をすぐ表示して、裏で最新を取りに行く ---------- */
 if (ROLE) {
   const cached = ls.get(CACHE_KEY);
   if (cached && cached.days) { setServer(cached, false); S.loaded = true; }
+  if (ROLE === "mom") { S.seen = ls.get(SEEN_KEY) || (cached && cached.days ? clone(cached) : null); if (S.seen) ls.set(SEEN_KEY, S.seen); clearBadge(); }
   render();
   refresh(true);
   if ("requestIdleCallback" in window) requestIdleCallback(() => swRegister().catch(() => {}));
