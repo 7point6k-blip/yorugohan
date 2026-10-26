@@ -407,13 +407,13 @@ function wakePicker(t) {
   return `<div class="seg">${seg("time", "時間")}${seg("free", "無制限")}${seg("tbd", "未定")}</div>${body}`;
 }
 function wakeCell(w, isBase) {
-  const tag = isBase && ROLE === "me" ? `<span class="tag">基本</span>` : "";
+  const tag = isBase ? `<span class="tag">基本</span>` : "";
   if (w.mode === "time") return `<span class="c ${isBase ? "base" : ""}">${hm(toMin(w.t))}w${tag}<span class="w2">${bOf(w.t)}b</span></span>`;
   if (w.mode === "free") return `<span class="c ${isBase ? "base" : ""}">無制限${tag}</span>`;
   return `<span class="c m">未定</span>`;
 }
 function dinnerCell(k, isBase) {
-  const tag = isBase && ROLE === "me" ? `<span class="tag">基本</span>` : "";
+  const tag = isBase ? `<span class="tag">基本</span>` : "";
   if (!k || k === "tbd") return `<span class="c m">未定</span>`;
   const i = DINNER[k];
   return `<span class="c ${isBase ? "base" : ""}">${i.label}${i.sfx || ""}${i.sub ? `<small>${i.sub}</small>` : ""}${tag}</span>`;
