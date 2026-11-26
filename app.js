@@ -110,7 +110,7 @@ function diff(date) {
 function momChanges() {
   if (ROLE !== "mom") return 0;
   const t = todayIso();
-  let n = diff(t).dinner ? 1 : 0;
+  let n = (diff(t).dinner ? 1 : 0) + (diff(t).wake ? 1 : 0);
   for (let i = 1; i <= 6; i++) { const f = diff(addDays(t, i)); n += (f.wake ? 1 : 0) + (f.dinner ? 1 : 0); }
   return n;
 }
@@ -370,10 +370,17 @@ function wakeBig(w) {
   if (w.mode === "free") return `<div class="big mid">無制限</div>`;
   return `<div class="big">${hm(toMin(w.t))}<i>w</i></div><div class="big sub">${bOf(w.t)}<i>b</i></div>`;
 }
+/* 一番上の細い行：今日の朝（起床と朝ごはん） */
+function mornText(w) {
+  if (!w || w.mode === "tbd") return `<span class="mv none">未定</span>`;
+  if (w.mode === "free") return `<span class="mv">無制限</span>`;
+  return `<span class="mv">${hm(toMin(w.t))}<i>w</i><span class="mb">${bOf(w.t)}<i>b</i></span></span>`;
+}
 function todayCard() {
   const t = todayIso(), n = addDays(t, 1), dt = diff(t), dn = diff(n);
   return `<section class="card today">
     <img class="plush" src="img/plush.webp" alt="" width="62" height="78" decoding="async">
+    <header class="morn ${dt.wake ? "chg" : ""}"><span class="k">今日の朝 <b>${md(t)}</b></span>${mornText(eff(t).wake)}${dt.wake ? wasTag(wakeText(dt.was.wake)) : ""}</header>
     <div class="half ${dt.dinner ? "chg" : ""}"><span class="k">今日の夜</span>${dinnerBig(eff(t).dinner)}${dt.dinner ? wasTag(dinnerText(dt.was.dinner)) : ""}</div>
     <div class="half ${dn.wake ? "chg" : ""}"><span class="k">明日の朝 <b>${md(n)}</b></span>${wakeBig(eff(n).wake)}${dn.wake ? wasTag(wakeText(dn.was.wake)) : ""}</div></section>`;
 }
